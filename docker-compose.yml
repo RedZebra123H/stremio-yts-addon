@@ -1,0 +1,27 @@
+# Two containers: the addon (Node) and Caddy (TLS reverse proxy).
+# Caddy automatically obtains + renews a Let's Encrypt cert for your domain.
+services:
+  addon:
+    build: .
+    restart: unless-stopped
+    environment:
+      - PORT=7000
+    expose:
+      - "7000" # internal only; Caddy talks to this
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - addon
+
+volumes:
+  caddy_data:
+  caddy_config:
