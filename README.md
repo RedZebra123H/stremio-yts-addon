@@ -31,10 +31,18 @@ the functional equivalent of the magnet string. So each stream is returned as:
   "name": "YTS 1080p BluRay",
   "title": "Avengers: Endgame (2019)\n👤 482 • 💾 3.01 GB • ⚙️ x264 • 1080p",
   "infoHash": "...",
-  "sources": ["tracker:udp://...", "...", "dht:..."],
-  "behaviorHints": { "bingeGroup": "yts-tt4154796-1080p-bluray" }
+  "fileIdx": 0,
+  "behaviorHints": {
+    "bingeGroup": "yts-tt4154796-1080p-bluray",
+    "filename": "Avengers.Endgame.2019.1080p.BluRay.x264-[YTS.LT].mp4"
+  }
 }
 ```
+
+`fileIdx` + `filename` are parsed from the actual `.torrent` file (see `lib/torrentfile.js`)
+so Stremio binds its buffering-progress and network/stats UI to the right file. We do
+**not** send a `sources` list — Stremio handles peer discovery via its own trackers + DHT,
+the same as Torrentio/TorrentsDB.
 
 The stream `name` shows `quality + source` (e.g. `1080p BluRay` / `720p WEB`) and the
 `title`/description shows `👤 seeders • size • codec • quality`. Seeders are live-scraped
@@ -89,6 +97,7 @@ node test/smoke.js tt0111161
 | `lib/torrent.js` | `buildMagnet`, `buildSources`, `toStream`, ranking, name encoding. |
 | `lib/trackers.js` | Tracker list — static fallback + live updates from trackerslist. |
 | `lib/scrape.js` | Live seeder counts via UDP tracker scrape (BEP 15). |
+| `lib/torrentfile.js` | Fetches/parses each `.torrent` to get `fileIdx` + filename. |
 | `test/smoke.js` | Headless verification against the real API. |
 
 ## Notes
