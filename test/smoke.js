@@ -1,17 +1,13 @@
-// Headless smoke test: hits the real YTS API, converts torrents, and prints
-// both the Stremio stream objects and the equivalent magnet URIs.
-// Usage: node test/smoke.js [tt0113375]
+// Headless smoke test: hits the real YTS API and builds the exact stream
+// objects Stremio would receive (ranked, with live seeders + fileIdx/filename).
+// Usage: node test/smoke.js [tt4154796]
 const { fetchMovie } = require('../lib/yts');
-const { toStream, buildMagnet, sortTorrents } = require('../lib/torrent');
+const { toStream, sortTorrents } = require('../lib/torrent');
 const { getSeeders } = require('../lib/scrape');
-const { refresh, getTrackers } = require('../lib/trackers');
+const { getFileInfo } = require('../lib/torrentfile');
 
 (async () => {
   const imdb = process.argv[2] || 'tt4154796';
-
-  console.log('Refreshing tracker list from trackerslist ...');
-  await refresh();
-  console.log(`Tracker count: ${getTrackers().length}\n`);
 
   console.log(`Fetching ${imdb} ...\n`);
   const movie = await fetchMovie(imdb);
@@ -23,19 +19,26 @@ const { refresh, getTrackers } = require('../lib/trackers');
   console.log(`${movie.title_long} — ${movie.torrents.length} torrent(s), ranked:\n`);
 
   for (const t of sortTorrents(movie.torrents)) {
-    const seeders = await getSeeders(t.hash.toLowerCase());
-    const stream = toStream(t, movie, { seeders });
-    console.log(`[${t.quality} ${t.type} ${t.video_codec}]  ->  name: "${stream.name}"`);
-    console.log('  desc   :', JSON.stringify(stream.title));
-    console.log('  magnet :', buildMagnet(t, movie).slice(0, 90) + '...');
+    const [seeders, fileInfo] = await Promise.all([
+      getSeeders(t.hash.toLowerCase()),
+      getFileInfo(t.url),
+    ]);
+    const stream = toStream(t, movie, { seeders, fileInfo });
+    console.log(`[${t.quality} ${t.type} ${t.video_codec}]`);
+    console.log('  ', JSON.stringify(stream));
     console.log('');
   }
 
-  // Basic assertions.
-  const s = toStream(movie.torrents[0], movie);
+  // Basic assertions on the first (top-ranked) stream.
+  const [seeders, fileInfo] = await Promise.all([
+    getSeeders(movie.torrents[0].hash.toLowerCase()),
+    getFileInfo(movie.torrents[0].url),
+  ]);
+  const s = toStream(movie.torrents[0], movie, { seeders, fileInfo });
   if (!s.infoHash || s.infoHash.length !== 40) throw new Error('bad infoHash');
-  if (!s.sources.some((x) => x.startsWith('tracker:'))) throw new Error('no tracker sources');
-  if (!s.sources.some((x) => x.startsWith('dht:'))) throw new Error('no dht source');
+  if (!('fileIdx' in s) || typeof s.behaviorHints.filename !== 'string') {
+    throw new Error('missing fileIdx/filename (torrent parse failed)');
+  }
 
   console.log('OK ✅');
 })().catch((err) => {

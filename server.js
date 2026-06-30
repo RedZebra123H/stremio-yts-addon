@@ -1,11 +1,7 @@
 const { serveHTTP } = require('stremio-addon-sdk');
 const addonInterface = require('./addon');
-const { startAutoRefresh } = require('./lib/trackers');
 
 const PORT = process.env.PORT || 7000;
-
-// Pull the latest tracker list now, then refresh periodically.
-startAutoRefresh();
 
 serveHTTP(addonInterface, { port: PORT });
 

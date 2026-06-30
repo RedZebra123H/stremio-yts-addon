@@ -1,7 +1,7 @@
 {
   "name": "stremio-yts-addon",
   "version": "1.0.6",
-  "description": "Stremio addon that serves YTS movie torrents as magnet streams (infoHash + trackers).",
+  "description": "Stremio addon serving YTS movie torrents (infoHash + fileIdx) with live seeder counts.",
   "main": "server.js",
   "type": "commonjs",
   "scripts": {

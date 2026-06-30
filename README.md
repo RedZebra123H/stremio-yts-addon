@@ -1,36 +1,23 @@
 # YTS Magnets — Stremio Addon
 
-A [Stremio](https://www.stremio.com/) addon that provides **movie** streams sourced
-from the YTS movie-details API. Torrent entries are converted to magnets on the fly
-(the addon does the conversion itself — YTS only returns `.torrent` links).
+A [Stremio](https://www.stremio.com/) addon that provides **movie** torrent streams,
+sourced from the YTS movie-details API, with live seeder counts and quality ranking.
 
 ## How it works
 
 1. Stremio asks for streams for a movie by its IMDb id, e.g. `tt0113375`.
 2. The addon fetches `https://movies-api.accel.li/api/v2/movie_details.json?imdb_id=tt0113375`.
-3. Each torrent in the response is turned into a Stremio stream.
+3. For each torrent it returns a Stremio stream, in parallel adding:
+   - **`fileIdx` + `filename`** — parsed from the actual `.torrent` (`lib/torrentfile.js`).
+   - **live seeder count** — scraped from trackers (`lib/scrape.js`).
 
-### Magnet conversion
-
-A magnet looks like:
-
-```
-magnet:?xt=urn:btih:HASH&dn=Url+Encoded+Name&tr=...&tr=...
-```
-
-- `HASH` — the torrent `hash`
-- `dn` — `title_long` + ` [quality] [YTS.GG]`, url-encoded (spaces → `+`)
-- `tr` — every tracker in [`lib/trackers.js`](lib/trackers.js)
-
-**Important:** Stremio's stream object has no `magnet` field. For torrents it takes
-`infoHash` + `sources` (the trackers) and assembles the magnet internally — that is
-the functional equivalent of the magnet string. So each stream is returned as:
+A returned stream looks like:
 
 ```json
 {
   "name": "YTS 1080p BluRay",
   "title": "Avengers: Endgame (2019)\n👤 482 • 💾 3.01 GB • ⚙️ x264 • 1080p",
-  "infoHash": "...",
+  "infoHash": "223f7484d326ad8efd3cf1e548ded524833cb77e",
   "fileIdx": 0,
   "behaviorHints": {
     "bingeGroup": "yts-tt4154796-1080p-bluray",
@@ -39,15 +26,24 @@ the functional equivalent of the magnet string. So each stream is returned as:
 }
 ```
 
-`fileIdx` + `filename` are parsed from the actual `.torrent` file (see `lib/torrentfile.js`)
-so Stremio binds its buffering-progress and network/stats UI to the right file. We do
-**not** send a `sources` list — Stremio handles peer discovery via its own trackers + DHT,
-the same as Torrentio/TorrentsDB.
+### Why `fileIdx` + `filename` matter
 
-The stream `name` shows `quality + source` (e.g. `1080p BluRay` / `720p WEB`) and the
-`title`/description shows `👤 seeders • size • codec • quality`. Seeders are live-scraped
-from trackers (see "Network stats / seeders" below) — not from the YTS API, which always
-reports `0`.
+Stremio only attaches its **buffering-progress ring and network/peers/speed stats UI**
+when it knows *which file inside the torrent* is the movie. Sending just `infoHash` plays
+the video (Stremio auto-picks the largest file) but leaves those indicators greyed out.
+
+So the addon fetches each `.torrent`, bencode-parses it, and sets the real `fileIdx` +
+`filename`. This must be parsed, not guessed — e.g. YTS **3D** torrents put the movie at
+`fileIdx: 1`, not 0.
+
+We deliberately do **not** send a `sources` (tracker) list on streams — Stremio handles
+peer discovery via its own trackers + DHT, exactly like Torrentio / TorrentsDB.
+
+### Stream name & description
+
+- **name**: `YTS <quality> <source>` — e.g. `YTS 1080p BluRay`, `YTS 720p WEB`.
+- **description** (line 2): `👤 seeders • 💾 size • ⚙️ codec • quality`. Seeders are
+  live-scraped (the YTS API always reports `0`); omitted if no tracker answers.
 
 ### Ranking
 
@@ -58,34 +54,56 @@ Streams are ordered by:
 3. **Codec** — `x265` (HEVC) above `x264`
 
 So for two streams of the same quality, BluRay wins; if source also matches, x265 wins.
+The maps live in `lib/torrent.js` (`QUALITY_RANK` / `TYPE_RANK` / `CODEC_RANK`).
 
-The exact magnet string is still built by `buildMagnet()` in
-[`lib/torrent.js`](lib/torrent.js) (matches your example byte-for-byte) and is
-printed by the smoke test, in case you want it elsewhere.
+## Live seeders
 
-## Run it
+Seeder counts are scraped on each request: `lib/scrape.js` does a BEP 15 UDP scrape of a
+few reliable open trackers (opentrackr, demonii, stealth, …) for each infoHash, in
+parallel, and shows the highest count found. Results are cached per infoHash for 10
+minutes, so only the first request for a movie pays the cost.
+
+(The download speed / connected peers shown *in the player during playback* come from
+Stremio's own torrent engine — this seeder count is a pre-playback estimate.)
+
+## Run locally
 
 ```bash
 npm install
-npm start          # serves on http://127.0.0.1:7000
+PORT=7700 npm start        # serves on http://127.0.0.1:7700
 ```
 
-Then in Stremio: open the addons screen and paste the install URL:
+Then in Stremio, open the addons screen and paste:
 
 ```
-http://127.0.0.1:7000/manifest.json
+http://127.0.0.1:7700/manifest.json
 ```
 
-Set a different port with `PORT=7700 npm start`.
+> Port 7000 is the SDK default but is taken by macOS Control Center (AirPlay), so use
+> another port. `npm run dev` uses `node --watch` to auto-restart on file changes.
+
+## Deploy (HTTPS, always-on)
+
+To use it on other devices the addon must be reachable over HTTPS. See
+[`DEPLOY.md`](DEPLOY.md) for the full free setup (cloud VM + Docker + Caddy + DuckDNS).
+Update workflow once deployed:
+
+```bash
+# Mac:  git add -A && git commit -m "..." && git push
+# VM:   git pull && sudo docker compose up -d --build
+```
+
+Bump `version` in `addon.js` when behavior changes, and uninstall/re-add the addon in
+Stremio to force a refresh.
 
 ## Test (no Stremio needed)
-
-Hits the live API and prints the streams + magnets it generates:
 
 ```bash
 npm test                  # defaults to tt4154796 (Avengers: Endgame)
 node test/smoke.js tt0111161
 ```
+
+Hits the live API and prints the ranked streams (with scraped seeders).
 
 ## Project layout
 
@@ -94,43 +112,14 @@ node test/smoke.js tt0111161
 | `addon.js` | Manifest + stream handler (movies only, `tt` IMDb ids). |
 | `server.js` | Boots the HTTP server via `serveHTTP`. |
 | `lib/yts.js` | Fetches movie details from the YTS API. |
-| `lib/torrent.js` | `buildMagnet`, `buildSources`, `toStream`, ranking, name encoding. |
-| `lib/trackers.js` | Tracker list — static fallback + live updates from trackerslist. |
+| `lib/torrent.js` | `toStream` + quality/source/codec ranking. |
+| `lib/torrentfile.js` | Fetches/parses each `.torrent` for `fileIdx` + filename. |
 | `lib/scrape.js` | Live seeder counts via UDP tracker scrape (BEP 15). |
-| `lib/torrentfile.js` | Fetches/parses each `.torrent` to get `fileIdx` + filename. |
 | `test/smoke.js` | Headless verification against the real API. |
+| `Dockerfile`, `docker-compose.yml`, `Caddyfile` | Deploy stack (see `DEPLOY.md`). |
 
 ## Notes
 
-- Streams are ranked: quality (4K → 3D → 1080p → 720p), then BluRay > WEB, then x265 > x264.
 - Unknown / non-movie ids return `{ "streams": [] }`.
-- Trackers are fetched from [ngosang/trackerslist](https://github.com/ngosang/trackerslist)
-  (`trackers_best.txt`) on startup and refreshed every 12h, merged with a static fallback
-  in `lib/trackers.js`.
-- Display naming (`name`/`title`) and the ranking maps live in `lib/torrent.js`
-  (`toStream`, `QUALITY_RANK` / `TYPE_RANK` / `CODEC_RANK`) — easy to tweak.
-
-## Network stats / seeders
-
-The seeder counts in the stream list are **scraped live** by this addon — the YTS API
-always reports `0`, so we don't use it. On each request, `lib/scrape.js` does a BEP 15
-UDP scrape of a few reliable open trackers (opentrackr, demonii, stealth, …) for each
-infoHash, in parallel, and shows the highest seeder count found. Results are cached per
-infoHash for 10 minutes, so only the first request for a movie pays the ~2–3s cost.
-
-If no tracker answers, the seeder part is simply omitted for that stream.
-
-(The download speed / connected peers shown *in the player during playback* come from
-Stremio's own torrent engine — separate from this.)
-
-## Publishing
-
-To use the addon from other devices it must be reachable over **HTTPS** (Stremio
-requires it for non-localhost addons). Host it anywhere that gives you HTTPS
-(e.g. a small VPS behind a reverse proxy, or a serverless host) and optionally
-announce it to the public catalog:
-
-```js
-const { publishToCentral } = require('stremio-addon-sdk');
-publishToCentral('https://your-domain/manifest.json');
-```
+- Seeder scraping and `.torrent` parsing run in parallel per request and are cached, so
+  only the first request for a given movie pays the cost.
