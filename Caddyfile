@@ -1,6 +1,6 @@
 # Replace the hostname with YOUR domain (e.g. a free DuckDNS subdomain).
 # Caddy fetches and auto-renews HTTPS certs for it. Stremio install URL becomes:
 #   https://YOUR-DOMAIN/manifest.json
-your-addon.duckdns.org {
+stremioyts.duckdns.org {
 	reverse_proxy addon:7000
 }
